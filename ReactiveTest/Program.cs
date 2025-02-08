@@ -1,23 +1,17 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Globalization;
-using System.Reactive.Concurrency;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using System.Reactive.Threading.Tasks;
-using System.Runtime.InteropServices;
-using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 
 namespace ReactiveTest
 {
 
-
-    // Define the messages (commands and events)
     public static class TS
     {
-        public static string timestamp => DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
+        public static string Timestamp => DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
     }
 
     public class OpenShutterCommand
@@ -42,12 +36,6 @@ namespace ReactiveTest
             ShutterId = shutter.ShutterId;
             State = shutter.State;
         }
-    }
-
-    public class ShutterClosedEvent
-    {
-        public string ShutterId { get; }
-        public ShutterClosedEvent(string shutterId) => ShutterId = shutterId;
     }
 
 
@@ -78,8 +66,6 @@ namespace ReactiveTest
         }
     }
 
-
-    // Example: Shutter Component with dynamic command/event handling
     public class ShutterComponent
     {
         public string ShutterId { get; }
@@ -111,7 +97,7 @@ namespace ReactiveTest
 
         public async Task OpenShutterAsync()
         {
-            Console.WriteLine($"[{TS.timestamp}] [Shutter {ShutterId}] Opening...");
+            Console.WriteLine($"[{TS.Timestamp}] [Shutter {ShutterId}] Opening...");
             await Task.Delay(1000);
             State = "Opened";
             _stateSubject.OnNext(State);
@@ -120,7 +106,7 @@ namespace ReactiveTest
 
         public async Task CloseShutterAsync()
         {
-            Console.WriteLine($"[{TS.timestamp}] [Shutter {ShutterId}] Closing...");
+            Console.WriteLine($"[{TS.Timestamp}] [Shutter {ShutterId}] Closing...");
             await Task.Delay(2000);
             State = "Closed";
             _stateSubject.OnNext(State);
@@ -130,10 +116,10 @@ namespace ReactiveTest
         // Wait for a specific state change
         public async Task WaitForStateAsync(string expectedState)
         {
-            Console.WriteLine($"[{TS.timestamp}] [Shutter {ShutterId}] Waiting for state: {expectedState}...");
+            Console.WriteLine($"[{TS.Timestamp}] [Shutter {ShutterId}] Waiting for state: {expectedState}...");
 
             using (Observable.Interval(TimeSpan.FromSeconds(0.5))
-                             .Subscribe(_ => Console.WriteLine($"[{TS.timestamp}] [Shutter {ShutterId}] Still waiting...")))
+                             .Subscribe(_ => Console.WriteLine($"[{TS.Timestamp}] [Shutter {ShutterId}] Still waiting...")))
             {
                 await _stateSubject
                      .Where(state => state == expectedState)
@@ -141,7 +127,7 @@ namespace ReactiveTest
                      .ToTask();
             }
 
-            Console.WriteLine($"[{TS.timestamp}] [Shutter {ShutterId}] Reached state: {expectedState}!");
+            Console.WriteLine($"[{TS.Timestamp}] [Shutter {ShutterId}] Reached state: {expectedState}!");
         }
     }
 
@@ -166,8 +152,8 @@ namespace ReactiveTest
         }
         private async Task StateChangedListener(ShutterStateChanged cmd)
         {
-            Console.WriteLine($"[{TS.timestamp}] [Listener]-[Shutter {cmd.ShutterId}] State is: {cmd.State} ");
-            await Task.Delay(TimeSpan.FromMilliseconds(5));
+            Console.WriteLine($"[{TS.Timestamp}] [Listener]-[Shutter {cmd.ShutterId}] State is: {cmd.State} ");
+            // await Task.Delay(TimeSpan.FromMilliseconds(5));
         }
     }
 
@@ -186,11 +172,11 @@ namespace ReactiveTest
 
 
             // Publish Commands
-            Console.WriteLine($"[{TS.timestamp}]  Sending Open Command to Shutter {sh1} ");
+            Console.WriteLine($"[{TS.Timestamp}]  Sending Open Command to Shutter {sh1} ");
             messageBus.Publish(new OpenShutterCommand(sh1));
-            Console.WriteLine($"[{TS.timestamp}] [MAIN] Waiting for Shutter {sh1} to open");
+            Console.WriteLine($"[{TS.Timestamp}] [MAIN] Waiting for Shutter {sh1} to open");
             await messageBus.WaitForEvent<ShutterStateChanged>(e => e.ShutterId == sh1 && e.State == "Opened");
-            Console.WriteLine($"[{TS.timestamp}] [MAIN] Shutter {sh1} is OPEN!");
+            Console.WriteLine($"[{TS.Timestamp}] [MAIN] Shutter {sh1} is OPEN!");
 
             messageBus.Publish(new OpenShutterCommand(sh2));
 
@@ -199,9 +185,9 @@ namespace ReactiveTest
             // Close shutters
             messageBus.Publish(new CloseShutterCommand(sh1));
             messageBus.Publish(new CloseShutterCommand(sh2));
-            Console.WriteLine($"[{TS.timestamp}] [MAIN] Waiting for Shutter {sh2} to close");
+            Console.WriteLine($"[{TS.Timestamp}] [MAIN] Waiting for Shutter {sh2} to close");
             await messageBus.WaitForEvent<ShutterStateChanged>(e => e.ShutterId == sh2 && e.State == "Closed");
-            Console.WriteLine($"[{TS.timestamp}] [MAIN] Shutter {sh2} is CLOSED!");
+            Console.WriteLine($"[{TS.Timestamp}] [MAIN] Shutter {sh2} is CLOSED!");
 
             await shutter1.WaitForStateAsync("Closed");
 
