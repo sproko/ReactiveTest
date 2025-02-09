@@ -333,15 +333,15 @@ namespace ReactiveTest
             messageBus.Publish(query);
             // Await the response
             var response = await query.CompletionSource.Task;
-            Console.WriteLine($"[{Ts.Timestamp}] [MAIN] [Shutter {response.ShutterId}] is {response.State}");
+            Console.WriteLine($"[{Ts.Timestamp}][MAIN] [Shutter {response.ShutterId}] is {response.State}");
 
             Console.ReadKey();
             shutter1.Dispose();
             shutter1 = null;
 
-            Console.WriteLine($"[{Ts.Timestamp}] [MAIN] got rid of shutter 1 {sh1} .. opening shutter {sh2} (should only see Notifications From Shutter 2)");
+            Console.WriteLine($"[{Ts.Timestamp}][MAIN] got rid of shutter 1 {sh1} .. opening shutter {sh2} (should only see Notifications From Shutter 2)");
             await shutter2.OpenShutterAsync();
-            Console.WriteLine($"[{Ts.Timestamp}] [MAIN] Shutter 2 {sh2} should be opened with shutter  ");
+            Console.WriteLine($"[{Ts.Timestamp}][MAIN] Shutter 2 {sh2} should be opened with shutter  ");
 
             Console.ReadKey();
             shutter2.Dispose();
