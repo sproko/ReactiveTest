@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Reactive.Disposables;
@@ -28,18 +29,28 @@ namespace ReactiveTest
         public CommandCloseShutter(string shutterId) => ShutterId = shutterId;
     }
 
-    public class NotificationShutterStateChanged
+    public class NotificationShutterCommandedStateChanged
     {
         public string ShutterId { get; }
         public string State { get; }
 
-        public NotificationShutterStateChanged(ShutterComponent shutter)
+        public NotificationShutterCommandedStateChanged(ShutterComponent shutter)
         {
             ShutterId = shutter.ShutterId;
             State = shutter.State;
         }
     }
+    public class NotificationShutterSensorChanged
+    {
+        public string ShutterId { get; }
+        public string ActualState { get; }
 
+        public NotificationShutterSensorChanged(string shutterId, string actualState)
+        {
+            ShutterId = shutterId;
+            ActualState = actualState;
+        }
+    }
     public class QueryShutterState
     {
         public string ShutterId { get; }
@@ -51,6 +62,7 @@ namespace ReactiveTest
             CompletionSource = new TaskCompletionSource<ShutterStateDto>();
         }
     }
+
 
     public class ShutterStateDto
     {
@@ -96,7 +108,7 @@ namespace ReactiveTest
         public string ShutterId { get; }
         public string State { get; private set; }
         private readonly EventAggregator _messageBus;
-        private readonly ReplaySubject<string> _stateSubject = new ReplaySubject<string>(1); // Keep last state
+        private readonly ReplaySubject<string> _stateSubject = new ReplaySubject<string>(1); // Keep only the last state
         private readonly CompositeDisposable _disposables = new CompositeDisposable();
 
         public ShutterComponent(string shutterId, EventAggregator messageBus)
@@ -114,16 +126,41 @@ namespace ReactiveTest
             // Subscribe dynamically based on ShutterId
             _disposables.Add(_messageBus.GetEvent<CommandOpenShutter>()
                                           .Where(cmd => cmd.ShutterId == ShutterId)
-                                          .Subscribe(HandleCommandOpenShutter));
-
+                                          .Subscribe(HandleCommandOpenShutter,
+                                                     ex => Console.WriteLine($"[{Ts.Timestamp}] ERROR CommandOpenShutter {ex.Message}")));
             _disposables.Add(_messageBus.GetEvent<CommandCloseShutter>()
                                           .Where(cmd => cmd.ShutterId == ShutterId)
-                                          .Subscribe(HandleCommandCloseShutter));
+                                          .Subscribe(HandleCommandCloseShutter,
+                                                     ex => Console.WriteLine($"[{Ts.Timestamp}] ERROR CommandCloseShutter {ex.Message}")));
             _disposables.Add(_messageBus.GetEvent<QueryShutterState>()
                                           .Where(cmd => cmd.ShutterId == ShutterId)
-                                          .Subscribe(HandleQueryShutterState));
-
+                                          .Subscribe(HandleQueryShutterState,
+                                                     ex => Console.WriteLine($"[{Ts.Timestamp}] ERROR QueryShutterState {ex.Message}")));
             _disposables.Add(_stateSubject);
+
+            //simulate IO
+            _disposables.Add(_messageBus.GetEvent<NotificationShutterCommandedStateChanged>()
+                                        .Where(cmd => cmd.ShutterId == ShutterId)
+                                        .Subscribe(HandleNotificationShutterCommandedStateChanged));
+        }
+
+        private async void HandleNotificationShutterCommandedStateChanged(NotificationShutterCommandedStateChanged notification)
+        {
+            Console.WriteLine($"[{Ts.Timestamp}] [Shutter {ShutterId}] NotificationShutterCommandedStateChanged {notification.State}");
+            switch (notification.State)
+            {
+                case "Closed":
+                    SimulateSensorFeedback("Closed", 1450);
+                    break;
+                case "Opened":
+                    SimulateSensorFeedback("Opened", 2450);
+                    break;
+            }
+        }
+        private async Task SimulateSensorFeedback(string state, int delayMs)
+        {
+            await Task.Delay(delayMs);
+            _messageBus.Publish(new NotificationShutterSensorChanged(ShutterId, state));
         }
 
         private async void HandleCommandOpenShutter(CommandOpenShutter cmd)
@@ -144,25 +181,38 @@ namespace ReactiveTest
         public async Task OpenShutterAsync()
         {
             Console.WriteLine($"[{Ts.Timestamp}] [Shutter {ShutterId}] Opening...");
-            await Task.Delay(1000);
             State = "Opened";
             _stateSubject.OnNext(State);
-            _messageBus.Publish(new NotificationShutterStateChanged(this));
+            _messageBus.Publish(new NotificationShutterCommandedStateChanged(this));
+            // Wait for sensor confirmation or timeout
+            var confirmed = await WaitForSensorStateAsync(TimeSpan.FromSeconds(3));
+
+            if (!confirmed)
+            {
+                Console.WriteLine($"[{Ts.Timestamp}] [Shutter {ShutterId}] ERROR: Sensor did not confirm 'Opened' state!");
+            }
         }
 
         public async Task CloseShutterAsync()
         {
             Console.WriteLine($"[{Ts.Timestamp}] [Shutter {ShutterId}] Closing...");
-            await Task.Delay(2000);
             State = "Closed";
             _stateSubject.OnNext(State);
-            _messageBus.Publish(new NotificationShutterStateChanged(this)); // Event is published after closing
+            _messageBus.Publish(new NotificationShutterCommandedStateChanged(this)); // Event is published after closing
+            // Wait for sensor confirmation or timeout
+            var confirmed = await WaitForSensorStateAsync(TimeSpan.FromSeconds(3));
+
+            if (!confirmed)
+            {
+                Console.WriteLine($"[{Ts.Timestamp}] [Shutter {ShutterId}] ERROR: Sensor did not confirm 'Opened' state!");
+            }
         }
 
-        // Wait for a specific state change
+        // Wait for a specific commanded state change *could add a timeout...
         public async Task WaitForStateAsync(string expectedState)
         {
-            Console.WriteLine($"[{Ts.Timestamp}] [Shutter {ShutterId}] Waiting for state: {expectedState}...");
+            var sw = Stopwatch.StartNew();
+            Console.WriteLine($"[{Ts.Timestamp}] [Shutter {ShutterId}] Waiting for commanded state: {expectedState}...");
 
             using (Observable.Interval(TimeSpan.FromSeconds(0.5))
                              .Subscribe(_ => Console.WriteLine($"[{Ts.Timestamp}] [Shutter {ShutterId}] Still waiting...")))
@@ -173,7 +223,34 @@ namespace ReactiveTest
                      .ToTask();
             }
 
-            Console.WriteLine($"[{Ts.Timestamp}] [Shutter {ShutterId}] Reached state: {expectedState}!");
+            Console.WriteLine($"[{Ts.Timestamp}] [Shutter {ShutterId}] Reached state: {expectedState}! ET({sw.ElapsedMilliseconds}ms)");
+        }
+        public async Task<bool> WaitForSensorStateAsync(TimeSpan timeout)
+        {
+            var sw = Stopwatch.StartNew();
+            Console.WriteLine($"[{Ts.Timestamp}] [Shutter {ShutterId}] Waiting for sensor confirmation of {State}");
+
+            try
+            {
+                var sensorTask = _messageBus.WaitForEvent<NotificationShutterSensorChanged>(e =>
+                                                                                    e.ShutterId == ShutterId && e.ActualState == State);
+                var timeoutTask = Task.Delay(timeout);
+                var completedTask = await Task.WhenAny(sensorTask, timeoutTask);
+
+                if (completedTask == sensorTask)
+                {
+                    Console.WriteLine($"[{Ts.Timestamp}] [Shutter {ShutterId}] Sensor {State} confirmed! ET({sw.ElapsedMilliseconds}ms)");
+                    return true;
+                }
+
+                Console.WriteLine($"[{Ts.Timestamp}] [Shutter {ShutterId}] Sensor timeout waiting for: {State}");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[{Ts.Timestamp}] [Shutter {ShutterId}] Wait for Sensor exception for {State}, error: {ex.Message}");
+                return false;
+            }
         }
 
         public void Dispose()
@@ -194,14 +271,21 @@ namespace ReactiveTest
         public ShutterNotificationListener(EventAggregator messageBus, string shutterId = null)
         {
             _messageBus = messageBus;
-            _subscriptions.Add(_messageBus.GetEvent<NotificationShutterStateChanged>()
+            _subscriptions.Add(_messageBus.GetEvent<NotificationShutterCommandedStateChanged>()
                                      .SelectMany(cmd => Observable.FromAsync(() => HandleNotificationShutterStateChanged(cmd))) // Fully async processing
+                                     .Subscribe());
+            _subscriptions.Add(_messageBus.GetEvent<NotificationShutterSensorChanged>()
+                                     .SelectMany(cmd => Observable.FromAsync(() => HandleNotificationShutterSensorChanged(cmd))) // Fully async processing
                                      .Subscribe());
 
         }
-        private async Task HandleNotificationShutterStateChanged(NotificationShutterStateChanged cmd)
+        private async Task HandleNotificationShutterStateChanged(NotificationShutterCommandedStateChanged cmd)
         {
-            Console.WriteLine($"[{Ts.Timestamp}] [Listener]-[Shutter {cmd.ShutterId}] State is: {cmd.State} ");
+            Console.WriteLine($"[{Ts.Timestamp}] [Listener]-[Shutter {cmd.ShutterId}] Commanded State is: {cmd.State} ");
+        }
+        private async Task HandleNotificationShutterSensorChanged(NotificationShutterSensorChanged cmd)
+        {
+            Console.WriteLine($"[{Ts.Timestamp}] [Listener]-[Shutter {cmd.ShutterId}] Sensor is: {cmd.ActualState} ");
         }
 
         public void Dispose()
@@ -211,6 +295,8 @@ namespace ReactiveTest
             _subscriptions.Dispose();
         }
     }
+
+
 
     internal static class Program
     {
@@ -225,38 +311,29 @@ namespace ReactiveTest
 
             var listener = new ShutterNotificationListener(messageBus);
 
-
             // Publish Commands
-            Console.WriteLine($"[{Ts.Timestamp}]  Sending Open Command to Shutter {sh1} ");
+            Console.WriteLine($"[{Ts.Timestamp}][MAIN] Sending Open Command to Shutter {sh1} ");
             messageBus.Publish(new CommandOpenShutter(sh1));
 
-            Console.WriteLine($"[{Ts.Timestamp}] [MAIN] Waiting for Shutter {sh1} to open");
-            await messageBus.WaitForEvent<NotificationShutterStateChanged>(e => e.ShutterId == sh1 && e.State == "Opened");
-
-            Console.WriteLine($"[{Ts.Timestamp}] [MAIN] Shutter {sh1} is OPEN!");
-
-            Console.WriteLine($"[{Ts.Timestamp}]  Sending Open Command to Shutter {sh2} ");
+            Console.WriteLine($"[{Ts.Timestamp}][MAIN] Sending Open Command to Shutter {sh2} ");
             messageBus.Publish(new CommandOpenShutter(sh2));
 
-            Console.WriteLine($"[{Ts.Timestamp}] [MAIN] Waiting for Shutter {sh2} to open with shutter reference");
-            await shutter2.WaitForStateAsync("Opened");
+            Console.WriteLine($"[{Ts.Timestamp}][MAIN] Waiting for Shutter {sh2} to open with shutter reference");
+            await shutter2.WaitForSensorStateAsync(TimeSpan.FromSeconds(3));
 
             // Close shutters
-            Console.WriteLine($"[{Ts.Timestamp}]  Sending Close Command to Shutters");
+            Console.WriteLine($"[{Ts.Timestamp}][MAIN] Sending Close Command to Shutters");
             messageBus.Publish(new CommandCloseShutter(sh1));
             messageBus.Publish(new CommandCloseShutter(sh2));
 
-            Console.WriteLine($"[{Ts.Timestamp}] [MAIN] Waiting for Shutter {sh2} to close");
-            await messageBus.WaitForEvent<NotificationShutterStateChanged>(e => e.ShutterId == sh2 && e.State == "Closed");
-            Console.WriteLine($"[{Ts.Timestamp}] [MAIN] Shutter {sh2} is CLOSED!");
-            await shutter1.WaitForStateAsync("Closed");
+            Console.WriteLine($"[{Ts.Timestamp}][MAIN] Waiting for Shutter {sh1} to close");
+            await shutter2.WaitForSensorStateAsync(TimeSpan.FromSeconds(3));
 
             var query = new QueryShutterState("001");
             messageBus.Publish(query);
-
             // Await the response
             var response = await query.CompletionSource.Task;
-            Console.WriteLine($"[{Ts.Timestamp}] [MAIN] Shutter {response.ShutterId} is {response.State}");
+            Console.WriteLine($"[{Ts.Timestamp}] [MAIN] [Shutter {response.ShutterId}] is {response.State}");
 
             Console.ReadKey();
             shutter1.Dispose();
