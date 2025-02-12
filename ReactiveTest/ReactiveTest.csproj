@@ -55,6 +55,12 @@
     <ItemGroup>
         <Compile Include="Program.cs"/>
         <Compile Include="Properties\AssemblyInfo.cs"/>
+        <Compile Include="Shutter\Commands\CommandCloseShutter.cs" />
+        <Compile Include="Shutter\Commands\CommandOpenShutter.cs" />
+        <Compile Include="Shutter\Notifications\NotificationShutterCommandedStateChanged.cs" />
+        <Compile Include="Shutter\Notifications\NotificationShutterSensorChanged.cs" />
+        <Compile Include="Shutter\Queries\QueryShutterState.cs" />
+        <Compile Include="Shutter\ShutterComponent.cs" />
     </ItemGroup>
     <ItemGroup>
       <None Include="packages.config" />
