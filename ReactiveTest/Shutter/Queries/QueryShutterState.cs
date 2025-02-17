@@ -1,4 +1,5 @@
 using System.Threading.Tasks;
+using ReactiveTest.DTO.Shutter;
 
 namespace ReactiveTest.Shutter.Queries
 {

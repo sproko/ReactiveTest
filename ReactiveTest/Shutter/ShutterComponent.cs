@@ -6,6 +6,8 @@ using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using System.Reactive.Threading.Tasks;
 using System.Threading.Tasks;
+using ReactiveTest.DTO.Shutter;
+using ReactiveTest.MessagesBus;
 using ReactiveTest.Shutter.Commands;
 using ReactiveTest.Shutter.Notifications;
 using ReactiveTest.Shutter.Queries;
@@ -14,16 +16,19 @@ namespace ReactiveTest.Shutter
 {
     public class ShutterComponent: IDisposable
     {
+        private string Name => $"Shutter_{ShutterId}";
         public string ShutterId { get; }
         public string State { get; private set; }
-        private readonly EventBus _messageBus;
+        private readonly MessagesBus.MessageBus _messageBus;
+        private readonly EventStore _eventStore;
         private readonly ReplaySubject<string> _stateSubject = new ReplaySubject<string>(1); // Keep only the last state
         private readonly CompositeDisposable _disposables = new CompositeDisposable();
 
-        public ShutterComponent(string shutterId, EventBus messageBus)
+        public ShutterComponent(string shutterId, MessageBus messageBus, EventStore eventStore)
         {
             ShutterId = shutterId;
             _messageBus = messageBus;
+            _eventStore = eventStore;
             State = "Closed";
             _stateSubject.OnNext(State);
             Start();
@@ -75,10 +80,12 @@ namespace ReactiveTest.Shutter
 
         private async void HandleCommandOpenShutter(CommandOpenShutter cmd)
         {
+            _eventStore.LogEvent(Name, cmd.GetType().Name, cmd);
             OpenShutterAsync();
         }
         private async void HandleCommandCloseShutter(CommandCloseShutter cmd)
         {
+            _eventStore.LogEvent(Name, cmd.GetType().Name, cmd);
             CloseShutterAsync();
         }
 
@@ -90,6 +97,7 @@ namespace ReactiveTest.Shutter
 
         public async Task OpenShutterAsync()
         {
+            var sw = Stopwatch.StartNew();
             Console.WriteLine($"[{Ts.Timestamp}] [Shutter {ShutterId}] Opening...");
             State = "Opened";
             _stateSubject.OnNext(State);
@@ -101,10 +109,12 @@ namespace ReactiveTest.Shutter
             {
                 Console.WriteLine($"[{Ts.Timestamp}] [Shutter {ShutterId}] ERROR: Sensor did not confirm 'Opened' state!");
             }
+            _eventStore.LogEvent(Name, nameof(OpenShutterAsync), sw.Elapsed);
         }
 
         public async Task CloseShutterAsync()
         {
+            var sw = Stopwatch.StartNew();
             Console.WriteLine($"[{Ts.Timestamp}] [Shutter {ShutterId}] Closing...");
             State = "Closed";
             _stateSubject.OnNext(State);
@@ -116,6 +126,8 @@ namespace ReactiveTest.Shutter
             {
                 Console.WriteLine($"[{Ts.Timestamp}] [Shutter {ShutterId}] ERROR: Sensor did not confirm 'Opened' state!");
             }
+            _eventStore.LogEvent(Name, nameof(CloseShutterAsync), sw.Elapsed);
+
         }
 
         // Wait for a specific commanded state change *could add a timeout...

@@ -1,111 +1,97 @@
 ﻿using System;
-using System.Collections.Concurrent;
-using System.Globalization;
-using System.Reactive.Disposables;
-using System.Reactive.Linq;
-using System.Reactive.Subjects;
-using System.Reactive.Threading.Tasks;
+using System.Collections.Generic;
 using System.Threading.Tasks;
+using LiteDB;
+using ReactiveTest.MessagesBus;
 using ReactiveTest.Shutter;
 using ReactiveTest.Shutter.Commands;
-using ReactiveTest.Shutter.Notifications;
 using ReactiveTest.Shutter.Queries;
 
 namespace ReactiveTest
 {
-
-    public static class Ts
+    public class EventLog
     {
-        public static string Timestamp => DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
-    }
+        public ObjectId Id { get; set; } = ObjectId.NewObjectId(); // Auto-generated
+        public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+        public string Component { get; set; }
+        public string EventType { get; set; }
+        public BsonDocument Data { get; set; } // Stores any event-specific info
 
-    public class ShutterStateDto
-    {
-        public string ShutterId { get; }
-        public string State { get; }
-
-        public ShutterStateDto(string shutterId, string state)
+        public override string ToString()
         {
-            ShutterId = shutterId;
-            State = state;
+            return $"[{Timestamp}] [{Component}] [{EventType}] - {Data}";
         }
     }
-
-    public class EventBus
+    public class EventStore: IDisposable
     {
-        private readonly ConcurrentDictionary<Type, object> _subjects = new ConcurrentDictionary<Type, object>();
+        private readonly LiteDatabase _db;
+        private readonly ILiteCollection<EventLog> _events;
 
-        public void Publish<T>(T eventMessage)
+        public EventStore(string dbPath)
         {
-            if (_subjects.TryGetValue(typeof(T), out var subjectObj) && subjectObj is Subject<T> subject)
+            _db = new LiteDatabase(dbPath);
+            _events = _db.GetCollection<EventLog>("events");
+            _events.EnsureIndex(x => x.Timestamp);
+        }
+
+        public void LogEvent<T>(string component, string eventType, T eventData)
+        {
+            var bsonData = BsonMapper.Global.ToDocument(eventData);
+            if (bsonData == null)
             {
-                subject.OnNext(eventMessage);
+                bsonData = new BsonDocument();
+                bsonData.Add(eventType, ConvertToBsonValue(eventData));
+            }
+
+            var log = new EventLog
+                      {
+                          Component = component,
+                          EventType = eventType,
+                          Data = bsonData,
+                      };
+
+            _events.Insert(log);
+        }
+        private BsonValue ConvertToBsonValue(object value)
+        {
+            switch (value)
+            {
+                case string s: return new BsonValue(s);
+                case int i: return new BsonValue(i);
+                case bool b: return new BsonValue(b);
+                case double d: return new BsonValue(d);
+                case DateTime dt: return new BsonValue(dt);
+                // Handle other types as needed
+                default: return new BsonValue(value?.ToString()); // Default conversion for unknown types
             }
         }
 
-        public IObservable<T> GetEvent<T>()
+        public IEnumerable<EventLog> GetEvents(DateTime? from = null, DateTime? to = null)
         {
-            var subject = (Subject<T>)_subjects.GetOrAdd(typeof(T), _ => new Subject<T>());
-            return subject.AsObservable();
-        }
-
-        public async Task<T> WaitForEvent<T>(Func<T, bool> predicate = null)
-        {
-            if (predicate == null)
-                predicate = _ => true; // Default to accepting any event of type T
-
-            return await GetEvent<T>().Where(predicate).FirstAsync().ToTask();
-        }
-    }
-
-    public class ShutterNotificationListener : IDisposable
-    {
-        private readonly EventBus _messageBus;
-        private CompositeDisposable _subscriptions = new CompositeDisposable();
-        private bool _disposed;
-
-        public ShutterNotificationListener(EventBus messageBus, string shutterId = null)
-        {
-            _messageBus = messageBus;
-            _subscriptions.Add(_messageBus.GetEvent<NotificationShutterCommandedStateChanged>()
-                                     .SelectMany(cmd => Observable.FromAsync(() => HandleNotificationShutterStateChanged(cmd))) // Fully async processing
-                                     .Subscribe());
-            _subscriptions.Add(_messageBus.GetEvent<NotificationShutterSensorChanged>()
-                                     .SelectMany(cmd => Observable.FromAsync(() => HandleNotificationShutterSensorChanged(cmd))) // Fully async processing
-                                     .Subscribe());
-
-        }
-        private async Task HandleNotificationShutterStateChanged(NotificationShutterCommandedStateChanged cmd)
-        {
-            Console.WriteLine($"[{Ts.Timestamp}] [Listener]-[Shutter {cmd.ShutterId}] Commanded State is: {cmd.State} ");
-        }
-        private async Task HandleNotificationShutterSensorChanged(NotificationShutterSensorChanged cmd)
-        {
-            Console.WriteLine($"[{Ts.Timestamp}] [Listener]-[Shutter {cmd.ShutterId}] Sensor is: {cmd.ActualState} ");
+            return _events.Find(x =>
+                                    (!from.HasValue || x.Timestamp >= from) &&
+                                    (!to.HasValue || x.Timestamp <= to));
         }
 
         public void Dispose()
         {
-            if (_disposed) return;
-            _disposed = true;
-            _subscriptions.Dispose();
+            _db?.Dispose();
         }
     }
-
-
-
     internal static class Program
     {
         public static async Task Main(string[] args)
         {
-            var messageBus = new EventBus();
+            var eventStore = new EventStore("eventStore.db");
+            eventStore.LogEvent("APPLICATION","Started","data or something");
+            var messageBus = new MessageBus();
             const string sh1 = "001";
             const string sh2 = "002";
             // Dynamically add shutters
-            var shutter1 = new ShutterComponent(sh1, messageBus);
-            var shutter2 = new ShutterComponent(sh2, messageBus);
+            var shutter1 = new ShutterComponent(sh1, messageBus, eventStore);
+            var shutter2 = new ShutterComponent(sh2, messageBus, eventStore);
 
-            var listener = new ShutterNotificationListener(messageBus);
+            var listener = new ShutterNotificationListener(messageBus, eventStore);
 
             // Publish Commands
             Console.WriteLine($"[{Ts.Timestamp}][MAIN] Sending Open Command to Shutter {sh1} ");
@@ -142,6 +128,14 @@ namespace ReactiveTest
             Console.ReadKey();
             shutter2.Dispose();
             shutter2 = null;
+
+            var t = eventStore.GetEvents();
+            foreach (var eventItem in t)
+            {
+                Console.WriteLine(eventItem);
+            }
+
+            eventStore.Dispose();
         }
 
     }
