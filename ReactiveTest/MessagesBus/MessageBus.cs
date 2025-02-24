@@ -83,7 +83,7 @@ namespace ReactiveTest.MessagesBus
         }
 
         // Wait for a specific event from a given ID
-        public async Task<T> WaitForEvent<T>(string id, Func<T, bool> predicate = null)
+        public async Task<T> WaitForEventById<T>(string id, Func<T, bool> predicate = null)
         {
             if (predicate == null)
                 predicate = _ => true; // Default to accepting any event of type T
