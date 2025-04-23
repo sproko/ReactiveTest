@@ -72,7 +72,7 @@
         <Compile Include="Shutter\Notifications\NotificationShutterSensorChanged.cs" />
         <Compile Include="Shutter\Queries\QueryShutterState.cs" />
         <Compile Include="Shutter\ShutterComponent.cs" />
-        <Compile Include="Ts.cs" />
+        <Compile Include="TimestampExtension.cs" />
     </ItemGroup>
     <ItemGroup>
       <None Include="packages.config" />

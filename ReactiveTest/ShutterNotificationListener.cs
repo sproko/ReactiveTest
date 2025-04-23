@@ -9,7 +9,7 @@ namespace ReactiveTest
 {
     public class ShutterNotificationListener : IDisposable
     {
-        private readonly MessagesBus.MessageBus _messageBus;
+        private readonly MessageBus _messageBus;
         private readonly EventStore _eventStore;
         private CompositeDisposable _subscriptions = new CompositeDisposable();
         private bool _disposed;
@@ -29,11 +29,11 @@ namespace ReactiveTest
         private async Task HandleNotificationShutterStateChanged(NotificationShutterCommandedStateChanged cmd)
         {
             _eventStore.LogEvent($"Shutter_{cmd.ShutterId}",cmd.GetType().Name, cmd);
-            Console.WriteLine($"[{Ts.Timestamp}] [Listener]-[Shutter {cmd.ShutterId}] Commanded State is: {cmd.State} ");
+            Console.WriteLine($"[{DateTime.Now.Pretty()}] [Listener]-[Shutter {cmd.ShutterId}] Commanded State is: {cmd.State} ");
         }
         private async Task HandleNotificationShutterSensorChanged(NotificationShutterSensorChanged cmd)
         {
-            Console.WriteLine($"[{Ts.Timestamp}] [Listener]-[Shutter {cmd.ShutterId}] Sensor is: {cmd.ActualState} ");
+            Console.WriteLine($"[{DateTime.Now.Pretty()}] [Listener]-[Shutter {cmd.ShutterId}] Sensor is: {cmd.ActualState} ");
         }
 
         public void Dispose()
